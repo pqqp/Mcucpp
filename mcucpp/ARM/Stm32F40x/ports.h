@@ -85,19 +85,20 @@ namespace Mcucpp
 				}
 				static void ClearAndSet(DataT clearMask, DataT value)
 				{
-					GpioRegs()->BSRR = value | (uint32_t)clearMask << 16;
+					Clear(clearMask);
+					Set(value);
 				}
 				static void Set(DataT value)
 				{
-					GpioRegs()->BSRR = value;
+					GpioRegs()->BSRRL = (uint16_t)value;
 				}
 				static void Clear(DataT value)
 				{
-					GpioRegs()->BSRR = ((uint32_t)value << 16);
+					GpioRegs()->BSRRH = (uint16_t)value;
 				}
 				static void Toggle(DataT value)
 				{
-					GpioRegs()->ODR ^= value;
+					ClearAndSet(value, (~GpioRegs()->ODR) & value);
 				}
 				static DataT PinRead()
 				{
@@ -109,25 +110,26 @@ namespace Mcucpp
 				template<DataT clearMask, DataT value>
 				static void ClearAndSet()
 				{
-					GpioRegs()->BSRR = (value | (uint32_t)clearMask << 16);
+					Clear(clearMask);
+					Set(value);
 				}
 
 				template<DataT value>
 				static void Toggle()
 				{
-					GpioRegs()->ODR ^= value;
+					ClearAndSet(value, (~GpioRegs()->ODR) & value);
 				}
 
 				template<DataT value>
 				static void Set()
 				{
-					GpioRegs()->BSRR = value;
+					GpioRegs()->BSRRL = (uint16_t)value;
 				}
 
 				template<DataT value>
 				static void Clear()
 				{
-					GpioRegs()->BSRR = ((uint32_t)value << 16);
+					GpioRegs()->BSRRH = (uint16_t)value;
 				}
 				
 				// Configuration
@@ -138,6 +140,7 @@ namespace Mcucpp
 					GpioRegs()->MODER = UnpackConfig2bits(1 << pin, GpioRegs()->MODER, configuration);
 					
 				}
+				
 				static void SetConfiguration(DataT mask, Configuration configuration)
 				{
 					GpioRegs()->MODER = UnpackConfig2bits(mask, GpioRegs()->MODER, configuration);

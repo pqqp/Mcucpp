@@ -72,7 +72,7 @@ namespace Mcucpp
 			IWDG->KR = ReloadKey;
 		}
 		
-		static bool ResetBy()
+		static bool CauseReset()
 		{
 			return RCC->CSR & RCC_CSR_IWDGRSTF;
 		}

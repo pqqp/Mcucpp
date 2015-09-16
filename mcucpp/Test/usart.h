@@ -28,6 +28,7 @@
 #ifndef USART_HPP
 #define USART_HPP
 #include <stdint.h>
+#include <stddef.h>
 #include <delegate.h>
 
 namespace Mcucpp
@@ -161,12 +162,12 @@ namespace Mcucpp
 			return usartData.InFunc();
 		}
 
-		static bool TxReady()
+		static bool WriteReady()
 		{
 			return usartData.txReady;
 		}
 
-		static bool RxReady()
+		static bool ReasReady()
 		{
 			return usartData.rxReady;
 		}

@@ -103,6 +103,8 @@ namespace Mcucpp
 		class Usart :public UsartBase
 		{
 		public:
+			typedef DmaChannel Dma;
+			
 			template<unsigned long baud>
 			static inline void Init(UsartMode usartMode = Default)
 			{
@@ -124,25 +126,29 @@ namespace Mcucpp
 
 			static void Write(uint8_t c)
 			{
-				while(!TxReady())
+				while(!WriteReady())
 					;
 				Regs()->TDR = c;
 			}
 			
 			static uint8_t Read()
 			{
-				while(!RxReady())
+				while(!ReadReady())
 					;
 				return Regs()->RDR;
 			}
 
-			static bool TxReady()
+			static bool WriteReady()
 			{
-				bool dmaActive = (Regs()->CR3 & USART_CR3_DMAT) && DmaChannel::Enabled();
-				return (!dmaActive || DmaChannel::TrasferComplete()) && ((Regs()->ISR & USART_ISR_TXE) != 0);
+				bool dmaActive = (Regs()->CR3 & USART_CR3_DMAT) && !DmaChannel::Ready();
+				
+				if(dmaActive)
+					return false;
+				
+				return ((Regs()->ISR & USART_ISR_TXE) != 0);
 			}
 
-			static bool RxReady()
+			static bool ReadReady()
 			{
 				return (Regs()->ISR & USART_ISR_RXNE) != 0;
 			}
@@ -268,9 +274,9 @@ namespace Mcucpp
 			{
 				if(async && size > 1)
 				{
-					while(!TxReady())
+					while(!WriteReady())
 						;
-					DmaChannel::ClearTrasferComplete();
+					DmaChannel::ClearFlags();
 					Regs()->CR3 |= USART_CR3_DMAT;
 					Regs()->ISR &= ~USART_ISR_TC;
 					DmaChannel::Init(DmaChannel::Mem2Periph | DmaChannel::MemIncriment, data, &Regs()->TDR, size);
@@ -316,4 +322,8 @@ namespace Mcucpp
 		DECLARE_USART(USART1, USART1_IRQn, Clock::Usart1Clock, Usart1, Dma1Channel4);
 		DECLARE_USART(USART2, USART2_IRQn, Clock::Usart2Clock, Usart2, Dma1Channel7);
 		DECLARE_USART(USART3, USART3_IRQn, Clock::Usart3Clock, Usart3, Dma1Channel2);
+		
+		#define MCUCPP_HAS_USART1 1
+		#define MCUCPP_HAS_USART2 1
+		#define MCUCPP_HAS_USART3 1
 }

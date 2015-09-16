@@ -3,9 +3,9 @@
 #include <clock.h>
 #include <ioreg.h>
 #include <static_assert.h>
+#include "stm32f4xx.h"
 #include <iopins.h>
 #include <pinlist.h>
-#include <debug.h>
 #include <stddef.h>
 #include <dma.h>
 
@@ -66,10 +66,9 @@ namespace Mcucpp
 	protected:
 	
 		static const unsigned ErrorMask = USART_SR_ORE | USART_SR_NE | USART_SR_FE | USART_SR_PE;
-		
-		static const unsigned InterruptMask = ParityErrorInt | TxEmptyInt |
-				TxCompleteInt | RxNotEmptyInt | IdleInt | LineBreakInt |
-				ErrorInt | CtsInt;
+		static const unsigned InterruptMask = USART_SR_ORE | USART_SR_CTS |
+				USART_SR_PE | USART_SR_TXE | USART_SR_TC | USART_SR_RXNE |
+				USART_SR_IDLE | USART_SR_LBD | USART_SR_FE | USART_SR_NE;
 		
 		static const unsigned CR1ModeMask = 
 			USART_CR1_M |
@@ -84,8 +83,9 @@ namespace Mcucpp
 			CR1ModeShift = 0,
 			CR2ModeShift = 16
 		};
+		
 	};
-
+	
 	inline UsartBase::UsartMode operator|(UsartBase::UsartMode left, UsartBase::UsartMode right)
 	{	return static_cast<UsartBase::UsartMode>(static_cast<unsigned>(left) | static_cast<unsigned>(right));	}
 	
@@ -98,11 +98,22 @@ namespace Mcucpp
 
 	namespace Private
 	{
-		template<class Regs, IRQn_Type IQRNumber, class ClockCtrl, class TxPins, class RxPins, class RemapField, class DmaChannel>
+		template
+		<
+			class Regs, 
+			IRQn_Type IQRNumber, 
+			class ClockCtrl, 
+			class TxPins, 
+			class RxPins, 
+			class DmaTxChannel, 
+			class DmaRxChannel, 
+			uint8_t DmaTxChannelNum,
+			uint8_t DmaRxChannelNum,
+			uint8_t UsartAltFuncNumber
+		>
 		class Usart :public UsartBase
 		{
 		public:
-			
 			template<unsigned long baud>
 			static inline void Init(UsartMode usartMode = Default)
 			{
@@ -112,35 +123,39 @@ namespace Mcucpp
 			static void Init(unsigned baud, UsartMode usartMode = Default)
 			{
 				ClockCtrl::Enable();
+				Regs()->CR1 = 0;
+				Regs()->CR2 = 0;
+				//SelectTxPin<0>();
+				//SelectRxPin<0>();
 				unsigned brr = ClockCtrl::ClockFreq() / baud;
 				Regs()->BRR = brr;
-				Regs()->CR1 = (((usartMode >> CR1ModeShift) & CR1ModeMask) | USART_CR1_UE );
 				Regs()->CR2 = ((usartMode >> CR2ModeShift) & CR1ModeMask);
+				Regs()->CR1 = (((usartMode >> CR1ModeShift) & CR1ModeMask) | USART_CR1_UE );
 			}
 
 			static void Write(uint8_t c)
 			{
-				while(!TxReady())
+				while(!WriteReady())
 					;
 				Regs()->DR = c;
 			}
 			
 			static uint8_t Read()
 			{
-				while(!RxReady())
+				while(!ReadReady())
 					;
 				return Regs()->DR;
 			}
 
-			static bool TxReady()
+			static bool WriteReady()
 			{
-				bool dmaActive = (Regs()->CR3 & USART_CR3_DMAT) && DmaChannel::Enabled();
-				return (!dmaActive || DmaChannel::TrasferComplete()) && (Regs()->SR & USART_SR_TXE);
+				bool dmaActive = (Regs()->CR3 & USART_CR3_DMAT) && DmaTxChannel::Enabled();
+				return (!dmaActive || DmaTxChannel::TrasferComplete()) && ((Regs()->SR & USART_SR_TXE) != 0);
 			}
 
-			static bool RxReady()
+			static bool ReadReady()
 			{
-				return Regs()->SR & USART_SR_RXNE;
+				return (Regs()->SR & USART_SR_RXNE) != 0;
 			}
 			
 			static void EnableInterrupt(InterrupFlags interruptFlags)
@@ -184,7 +199,7 @@ namespace Mcucpp
 				uint32_t cr2Mask = 0;
 				uint32_t cr3Mask = 0;
 				
-				if(interruptFlags & ParityErrorInt)
+				if(interruptFlags & ParityErrorInt) 
 					cr1Mask |= USART_CR1_PEIE;
 					
 				STATIC_ASSERT(
@@ -228,55 +243,39 @@ namespace Mcucpp
 			template<uint8_t TxPinNumber, uint8_t RxPinNumber>
 			static void SelectTxRxPins()
 			{
-				STATIC_ASSERT(TxPinNumber == RxPinNumber);
-				
 				typedef typename TxPins:: template Pin<TxPinNumber> TxPin;
 				TxPin::Port::Enable();
 				TxPin::SetConfiguration(TxPin::Port::AltFunc);
+				TxPin::AltFuncNumber(UsartAltFuncNumber);
 				
 				typedef typename RxPins:: template Pin<RxPinNumber> RxPin;
 				RxPin::Port::Enable();
 				RxPin::SetConfiguration(RxPin::Port::AltFunc);
-				if(TxPins::Length == 3 && TxPinNumber == 2) // Usart3
-				{
-					RemapField::Set(3);
-				}
-				else
-				{
-					RemapField::Set(TxPinNumber);
-				}
+				RxPin::AltFuncNumber(UsartAltFuncNumber);
 			}
-			
+
 			static void SelectTxRxPins(uint8_t TxPinNumber, uint8_t RxPinNumber)
 			{
-				MCUCPP_ASSERT(TxPinNumber == RxPinNumber);
 				typedef typename TxPins::ValueType Type;
 				Type maskTx (1 << TxPinNumber);
 				TxPins::SetConfiguration(maskTx, TxPins::AltFunc);
-				
+				TxPins::AltFuncNumber(maskTx, UsartAltFuncNumber);
+
 				Type maskRx (1 << RxPinNumber);
 				RxPins::SetConfiguration(maskRx, RxPins::AltFunc);
-				
-				if(TxPins::Length == 3 && TxPinNumber == 2) // Usart3
-				{
-					RemapField::Set(3);
-				}
-				else
-				{
-					RemapField::Set(TxPinNumber);
-				}
+				RxPins::AltFuncNumber(maskRx, UsartAltFuncNumber);
 			}
 			
 			static void Write(const void *data, size_t size, bool async = false)
 			{
 				if(async && size > 1)
 				{
-					while(!TxReady())
+					while(!WriteReady())
 						;
-					DmaChannel::ClearTrasferComplete();
+					DmaTxChannel::ClearFlags();
 					Regs()->CR3 |= USART_CR3_DMAT;
 					Regs()->SR &= ~USART_SR_TC;
-					DmaChannel::Init(DmaChannel::Mem2Periph | DmaChannel::MemIncriment, data, &Regs()->DR, size);
+					DmaTxChannel::Transfer(DmaTxChannel::Mem2Periph | DmaTxChannel::MemIncriment, data, &Regs()->DR, size, DmaTxChannelNum);
 				}
 				else
 				{
@@ -288,38 +287,93 @@ namespace Mcucpp
 					}
 				}
 			}
+			
+			static void Read(void *data, size_t size, bool async = false)
+			{
+				uint8_t *ptr = (uint8_t*)data;
+				if(async && size > 1)
+				{
+					if(ReadReady())
+					{
+						*ptr = Read();
+						ptr++;
+						size--;
+					}
+					Regs()->CR3 |= USART_CR3_DMAR;
+					Regs()->SR &= ~USART_SR_RXNE;
+					DmaRxChannel::Transfer(DmaRxChannel::Periph2Mem | DmaRxChannel::MemIncriment, ptr, &Regs()->DR, size, DmaRxChannelNum);
+				}
+				else
+				{
+					while(size--)
+					{
+						*ptr = Read();
+						ptr++;
+					}
+				}
+			}
+			
+			static void SetTxCompleteCallback(TransferCallback callback)
+			{
+				DmaTxChannel::SetTransferCallback(callback);
+			}
+			
+			static void SetRxCompleteCallback(TransferCallback callback)
+			{
+				DmaRxChannel::SetTransferCallback(callback);
+			}
+			
+			static void Break()
+			{
+				while(!WriteReady())
+					;
+				Regs()->CR1 |= USART_CR1_SBK;
+			}
+
 		};
-		
+	#if defined(STM32F40_41xxx)
 		typedef IO::PinList<IO::Pa9,  IO::Pb6> Usart1TxPins;
 		typedef IO::PinList<IO::Pa10, IO::Pb7> Usart1RxPins;
 		
-		typedef IO::PinList<IO::Pa2, IO::Pd5> Usart2TxPins;
-		typedef IO::PinList<IO::Pa3, IO::Pd6> Usart2RxPins;
+		typedef IO::PinList<IO::Pa2,  IO::Pd5> Usart2TxPins;
+		typedef IO::PinList<IO::Pa3,  IO::Pd6> Usart2RxPins;
 		
-		typedef IO::PinList<IO::Pb10, IO::Pd8, IO::Pc10> Usart3TxPins;
-		typedef IO::PinList<IO::Pb11, IO::Pa9, IO::Pc11> Usart3RxPins;
+		typedef IO::PinList<IO::Pb10, IO::Pc10, IO::Pd8> Usart3TxPins;
+		typedef IO::PinList<IO::Pb11, IO::Pc11, IO::Pd9> Usart3RxPins;
 		
-		IO_BITFIELD_WRAPPER(AFIO->MAPR, Usart1Remap, uint32_t, 2, 1);
-		IO_BITFIELD_WRAPPER(AFIO->MAPR, Usart2Remap, uint32_t, 3, 1);
-		IO_BITFIELD_WRAPPER(AFIO->MAPR, Usart3Remap, uint32_t, 4, 2);
+		typedef IO::PinList<IO::Pa0,  IO::Pc10> Uart4TxPins;
+		typedef IO::PinList<IO::Pa1,  IO::Pc11> Uart4RxPins;
+		
+		typedef IO::PinList<IO::Pc12> Uart5TxPins;
+		typedef IO::PinList<IO::Pd2> Uart5RxPins;
+		
+		typedef IO::PinList<IO::Pc6, IO::Pg14> Usart6TxPins;
+		typedef IO::PinList<IO::Pc7, IO::Pg9> Usart6RxPins;
+		
+		
+	#else
+	#error TODO: add USART pins description
+	#endif
+	
+		IO_STRUCT_WRAPPER(USART1, Usart1Regs, USART_TypeDef);
+		IO_STRUCT_WRAPPER(USART2, Usart2Regs, USART_TypeDef);
+		IO_STRUCT_WRAPPER(USART3, Usart3Regs, USART_TypeDef);
+		IO_STRUCT_WRAPPER(UART4, Uart4Regs, USART_TypeDef);
+		IO_STRUCT_WRAPPER(UART5, Uart5Regs, USART_TypeDef);
+		IO_STRUCT_WRAPPER(USART6, Usart6Regs, USART_TypeDef);
 	}
-
-#define DECLARE_USART(REGS, IRQ, CLOCK, className, DmaChannel) \
-	namespace Private \
-	{\
-		IO_STRUCT_WRAPPER(REGS, className ## _REGS, USART_TypeDef);\
-	}\
-	typedef Private::Usart<\
-		Private::className ## _REGS, \
-		IRQ,\
-		CLOCK,\
-		Private::className ## TxPins, \
-		Private::className ## RxPins, \
-		Private::className ## Remap, \
-		DmaChannel\
-		> className
-
-		DECLARE_USART(USART1, USART1_IRQn, Clock::Usart1Clock, Usart1, Dma1Channel4);
-		DECLARE_USART(USART2, USART2_IRQn, Clock::Usart2Clock, Usart2, Dma1Channel7);
-		DECLARE_USART(USART3, USART3_IRQn, Clock::Usart3Clock, Usart3, Dma1Channel2);
+	
+	typedef Private::Usart<Private::Usart1Regs, USART1_IRQn, Clock::Usart1Clock, Private::Usart1TxPins, Private::Usart1RxPins, Dma2Channel7, Dma2Channel2, 4, 4, 7> Usart1;
+	typedef Private::Usart<Private::Usart2Regs, USART2_IRQn, Clock::Usart2Clock, Private::Usart2TxPins, Private::Usart2RxPins, Dma1Channel6, Dma1Channel5, 4, 4, 7> Usart2;
+	typedef Private::Usart<Private::Usart3Regs, USART3_IRQn, Clock::Usart3Clock, Private::Usart3TxPins, Private::Usart3RxPins, Dma1Channel3, Dma1Channel1, 4, 4, 7> Usart3;
+	typedef Private::Usart<Private::Uart4Regs,  UART4_IRQn,  Clock::Uart4Clock,  Private::Uart4TxPins,  Private::Uart4RxPins,  Dma1Channel4, Dma1Channel2, 4, 4, 8> Uart4;
+	typedef Private::Usart<Private::Uart5Regs,  UART5_IRQn,  Clock::Uart5Clock,  Private::Uart5TxPins,  Private::Uart5RxPins,  Dma2Channel7, Dma2Channel0, 4, 4, 8> Uart5;
+	typedef Private::Usart<Private::Usart6Regs, USART6_IRQn, Clock::Usart6Clock, Private::Usart6TxPins, Private::Usart6RxPins, Dma2Channel7, Dma2Channel2, 5, 5, 8> Usart6;
+	
+	#define MCUCPP_HAS_USART1 1
+	#define MCUCPP_HAS_USART2 1
+	#define MCUCPP_HAS_USART3 1
+	#define MCUCPP_HAS_USART4 1
+	#define MCUCPP_HAS_USART5 1
+	#define MCUCPP_HAS_USART6 1
 }

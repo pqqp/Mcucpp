@@ -1,0 +1,29 @@
+import os
+
+Device = \
+{
+	'name' : 'STM32F407VG',
+	'cpu' : 'cortex-m4',
+	'defines' : ['STM32F40_41xxx', 'F_OSC=8000000u'],
+	#'archOptions' : ['mthumb', 'mfloat-abi=softfp'],
+	'archOptions' : ['mthumb', 'mhard-float'],
+	'linkerscript' : '#/linker_scripts/stm32_40x.ld',
+	'clock' : 168000000
+}
+
+armEnv = Environment(DEVICE = Device, 
+	toolpath = ['#/scons'], 
+	tools=['arm'], 
+	ENV = os.environ,
+	CPPPATH=['#/mcucpp', '#/mcucpp/ARM/Stm32F40x', '#/mcucpp/ARM/CortexM4', '#/./'])
+
+armEnv.Append(LINKFLAGS = ["-nostdlib"])
+armEnv.Append(CCFLAGS = ["-O3", "-finline-limit=60"])
+
+startup = armEnv.Object('test_startup_stm32_40x', '#/startups/startup_stm32_40x.c')
+app_objects = armEnv.Object(['main.cpp'])
+dma = armEnv.Object('stmf4_test_dma', '#/mcucpp/ARM/Stm32F40x/src/dma.cpp')
+
+elf = armEnv.Program('Stm32f3HwTest', startup + app_objects + dma)
+lss = armEnv.Disassembly(elf)
+hex = armEnv.Hex(elf)

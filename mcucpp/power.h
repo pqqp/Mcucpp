@@ -25,6 +25,8 @@
 // EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //*****************************************************************************
 
+#pragma once
+
 namespace Mcucpp
 {
 	class Power
@@ -55,6 +57,11 @@ namespace Mcucpp
 		
 		// Need to be called from interrupts to exit sleep mode on some paltforms
 		static inline void ExitSleepModeIrq();
+		
+		// Get supply voltage in 1/10 Volt unints if supported by hardware.
+		static inline unsigned GetVdd();
+		
+		static inline bool Detect();
 	};
 }
 
